@@ -12,7 +12,7 @@ try:
     from svea_mocap.mocap import MotionCaptureInterface
 except ImportError:
     pass
-from svea.controllers.mpc import MPC_casadi
+from svea.controllers.mpc_warm_start import MPC_casadi
 from svea.svea_managers.path_following_sveas import SVEAManagerMPC
 from svea.data import TrajDataHandler, RVIZPathHandler
 from std_msgs.msg import Float32
@@ -140,7 +140,10 @@ class mpc_navigation:
 
                 if  not self.is_goal_reached(distance_to_next_point):
                     # Run the MPC to compute control
+                    comp_start = rospy.get_time()
                     steering_rate, acceleration = self.svea.controller.compute_control([self.state[0],self.state[1],self.state[2],self.velocity,self.steering], reference_trajectory)
+                    comp_end = rospy.get_time()
+                    self.mpc_computation_time_pub.publish(comp_end-comp_start)
                     self.steering += steering_rate * measured_dt
                     self.velocity += acceleration * measured_dt  
                     self.predicted_state = self.svea.controller.get_optimal_states()
@@ -164,6 +167,8 @@ class mpc_navigation:
         self.velocity_measured_pub = rospy.Publisher('/measured_speed', Float32, queue_size=1)   # estimated/measured speed
         self.predicted_trajectory_pub = rospy.Publisher('/predicted_path', PoseArray, queue_size=1)
         self.static_trajectory_pub = rospy.Publisher('/static_path', PoseArray, queue_size=1)
+
+        self.mpc_computation_time_pub = rospy.Publisher('/computation_time', Float32, queue_size=1)
 
     def init_subscribers(self):
         self.mpc_target_sub = rospy.Subscriber('/mpc_target', PoseStamped, self.mpc_target_callback)
@@ -259,7 +264,7 @@ class mpc_navigation:
         euler = tf.transformations.euler_from_quaternion(quaternion)
         
         # Return the yaw
-        return euler[2]  
+        return euler[2]
     
     def compute_trajectory(self):
         """
