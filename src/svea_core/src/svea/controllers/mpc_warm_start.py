@@ -2,10 +2,18 @@
 
 import casadi as ca
 import numpy as np
+import os
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
+import rospy
+import threading
 
 from svea.helpers import load_param
 
 class MPC_casadi:
+
+    X0, XN = -2, 4
+    Y0, YN = -2, 4
 
     def __init__(self, vehicle_name='', config_ns='~mpc'):
         """
@@ -71,6 +79,8 @@ class MPC_casadi:
 
         self.Qv_num  = load_param(f'{config_ns}/forward_speed_weight')
         self.Qv = ca.DM(self.Qv_num)
+
+        self.Q_HJ = 1000
         
         ## Model Parameters
 
@@ -90,18 +100,28 @@ class MPC_casadi:
         self.L = ca.DM(load_param(f'{config_ns}/wheelbase'))
         
         ## Setup CasADi
-
         self.opti = ca.Opti()
 
+        ## Setup value function
+        self.set_value_function()
+
+        ## Setup reachability cost function
+        self.define_reachability_cost_function()
+
+        ## Setup cost associated with value function
         self.define_state_and_control_variables()
         self.set_objective_function()
         self.set_state_constraints()
         self.set_control_input_constraints()
         self.set_solver_options()
+        
+        ## Publish points for reachability
+        self.thread1 = threading.Thread(target=self.publish_red_dots_array, daemon = True)
+        self.thread1.start()
 
-        ## Setup value function
-
-        self.set_value_function()
+        ## Publish points for reachability
+        self.thread2 = threading.Thread(target=self.publish_reachability_cost_func, daemon = True)
+        self.thread2.start()
 
     def compute_control(self, state, reference_trajectory):
         """
@@ -131,7 +151,6 @@ class MPC_casadi:
 
         return steering_rate, acceleration
     
-
     def get_optimal_control(self, all=True):
         """
         This method returns the optimal control computed by the mpc.
@@ -192,6 +211,9 @@ class MPC_casadi:
                                + ca.mtimes([input_cost.T, self.Q2, input_cost])
                                + ca.mtimes([self.u[:, k].T, self.Q3, self.u[:, k]])
                                + ca.mtimes([velocity_penalty.T, self.Qv, velocity_penalty]))
+            
+            # Reachability state cost
+            # self.objective += self.compute_reachability_cost_function(self.x[0,k],self.x[1,k]) * self.Q_HJ
 
         # Final state cost
         final_state_error = self.compute_state_error(self.x[:, self.current_horizon], self.x_ref[:, self.current_horizon])
@@ -243,9 +265,164 @@ class MPC_casadi:
 
     def set_value_function(self):
         # Import value function from file
-        self.value_function = np.load("out1.npy")
-        print(self.value_function.shape())
+        file_path = os.path.join(os.path.dirname(__file__), "out1.npy")
+        self.value_function = np.load(file_path)
+        print(self.value_function.shape)
+
+    def define_reachability_cost_function(self):
+        k = 1
+        p = 500
+        t = 0
+        cost = 0
+        dx, dy = self.XN/len(self.value_function[t]), self.YN/len(self.value_function[t][0])
+
+        x_var = self.opti.variable()
+        y_var = self.opti.variable()
+        t_var = self.opti.variable()
+
+        for i in range(len(self.value_function[t])):  # Iterate over row indices
+            for j in range(len(self.value_function[t][i])):  # Iterate over column indices
+                # Check if the minimum value in self.value_function[t][i][j] is less than 0
+                if np.min(self.value_function[t][i][j]) >= 0:
+                    x_i, y_j = self.X0+i*dx,self.Y0+j*dy
+                    cost += 1/(k + p*(x_var-x_i)**2 + p*(y_var-y_j)**2)
+
+        # cost += 1/(k + p*(x_var-1)**2 + p*(y_var-1)**2)
+        # cost += 1/(k + p*(x_var+1)**2 + p*(y_var+1)**2)
+
+        self.reachability_cost_function = ca.Function('f', [x_var, y_var], [cost/2])
+
+    def publish_red_dots_array(self):
+        marker_pub = rospy.Publisher("/visualization_marker_array", MarkerArray, queue_size=10)
+
+        rate = rospy.Rate(1)  # Publish at 1 Hz
+
+        # Define multiple positions for the red dots
+        t = 0
+        positions = []
+        dx, dy = self.XN/len(self.value_function[t]), self.YN/len(self.value_function[t][0])
+
+        for i in range(len(self.value_function[t])):  # Iterate over row indices
+            for j in range(len(self.value_function[t][i])):  # Iterate over column indices
+                # Check if the minimum value in self.value_function[t][i][j] is less than 0
+                if np.min(self.value_function[t][i][j]) >= 0:
+                    positions.append((self.X0+i*dx,self.Y0+j*dy,0))
+
+        # for time in range(len(self.value_function)):
+        #     for i in range(len(self.value_function[time])):  # Iterate over row indices
+        #         for j in range(len(self.value_function[time][i])):  # Iterate over column indices
+        #             # Check if the minimum value in self.value_function[t][i][j] is less than 0
+        #             if np.min(self.value_function[time][i][j]) < 0:
+        #                 positions.append((X0+i*dx,Y0+j*dy,time/5))
+
+        # positions = [(x * 0.5, x * 0.5, 0.5) for x in range(10)]  # Generates a diagonal line of dots
+        
+        while not rospy.is_shutdown():
+            marker_array = MarkerArray()  # Create an array of markers
+
+            for i, (x, y, z) in enumerate(positions):
+                marker = Marker()
+                marker.header.frame_id = "map"
+                marker.header.stamp = rospy.Time.now()
+                marker.ns = "red_dots"
+                marker.id = i  # Each marker must have a unique ID
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+
+                # Set position
+                marker.pose.position = Point(x, y, z)
+                marker.pose.orientation.w = 1.0
+
+                # Set scale (size of dots)
+                s = (dx+dy)/2
+                marker.scale.x = s
+                marker.scale.y = s
+                marker.scale.z = s
+
+                # Set color (red, full opacity)
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+                marker.color.a = 1.0
+
+                marker.lifetime = rospy.Duration()  # Keep dots persistent
+
+                marker_array.markers.append(marker)
+
+            # Publish the entire marker array
+            marker_pub.publish(marker_array)
+            
+            rate.sleep()
     
+    def publish_reachability_cost_func(self):
+        marker_pub = rospy.Publisher("/visualization_cost_func", MarkerArray, queue_size=10)
+
+        rate = rospy.Rate(1)  # Publish at 1 Hz
+
+        # Define multiple positions for the red dots
+        t = 0
+        positions = []
+        grid_size = 50
+        dx, dy = self.XN/grid_size, self.YN/grid_size
+
+        for i in range(grid_size):  # Iterate over row indices
+            for j in range(grid_size):  # Iterate over column indices
+                # Check if the minimum value in self.value_function[t][i][j] is less than 0
+                x_i, y_j = self.X0+i*dx,self.Y0+j*dy
+                v = self.reachability_cost_function(x_i,y_j)
+                positions.append((x_i,y_j,v))
+
+        # for time in range(len(self.value_function)):
+        #     for i in range(len(self.value_function[time])):  # Iterate over row indices
+        #         for j in range(len(self.value_function[time][i])):  # Iterate over column indices
+        #             # Check if the minimum value in self.value_function[t][i][j] is less than 0
+        #             if np.min(self.value_function[time][i][j]) < 0:
+        #                 positions.append((X0+i*dx,Y0+j*dy,time/5))
+
+        # positions = [(x * 0.5, x * 0.5, 0.5) for x in range(10)]  # Generates a diagonal line of dots
+        
+        while not rospy.is_shutdown():
+            marker_array = MarkerArray()  # Create an array of markers
+
+            for i, (x, y, z) in enumerate(positions):
+                marker = Marker()
+                marker.header.frame_id = "map"
+                marker.header.stamp = rospy.Time.now()
+                marker.ns = "red_dots"
+                marker.id = i  # Each marker must have a unique ID
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
+
+                # Set position
+                marker.pose.position = Point(x, y, z)
+                marker.pose.orientation.w = 1.0
+
+                # Set scale (size of dots)
+                s = (dx+dy)/2
+                marker.scale.x = s
+                marker.scale.y = s
+                marker.scale.z = s
+
+                # Set color (red, full opacity)
+                if z >= 0.5:
+                    marker.color.r = 1.0
+                    marker.color.g = 0.0
+                else:
+                    marker.color.r = 0.0
+                    marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker.color.a = 1.0
+
+                marker.lifetime = rospy.Duration()  # Keep dots persistent
+
+                marker_array.markers.append(marker)
+
+            # Publish the entire marker array
+            marker_pub.publish(marker_array)
+            
+            rate.sleep()
+    
+
     def bound_initial_state(self,state):
         """
         This method checks if the initial state provided to the mpc, which could come from the localization stack,

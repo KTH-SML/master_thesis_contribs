@@ -12,7 +12,7 @@ try:
     from svea_mocap.mocap import MotionCaptureInterface
 except ImportError:
     pass
-from svea.controllers.mpc import MPC_casadi
+from svea.controllers.mpc_warm_start import MPC_casadi
 from svea.svea_managers.path_following_sveas import SVEAManagerMPC
 from svea.data import TrajDataHandler, RVIZPathHandler
 from std_msgs.msg import Float32
@@ -50,7 +50,7 @@ class mpc_navigation:
         ## ROS Parameters
         self.USE_RVIZ = load_param('~use_rviz', False)
         self.IS_SIM = load_param('~is_sim', False)
-        self.STATE = load_param('~state', [-3, 0, 0, 0])    # [x,y,yaw,v] wrt map frame. Initial state for simulator.
+        self.STATE = load_param('~state', [1.75, -1.25, np.pi, 0])    # [x,y,yaw,v] wrt map frame. Initial state for simulator.
         self.MPC_FREQ = load_param('~mpc_freq', 10)
         self.SVEA_MOCAP_NAME = load_param('~svea_mocap_name')
         self.DELTA_S = load_param('~delta_s', 5)            # static path discretization lenght
