@@ -1,0 +1,29 @@
+#! /bin/sh
+#
+# Create and start (run) a container.
+#
+# The container will be privileged and share the host network.
+#
+# Author: Kaj Munhoz Arfvidsson
+
+. "$(dirname "$0")/config.sh"
+
+CMD="docker run"
+ARGS=""
+
+append ARGS \
+    -it \
+    -e "TERM=xterm-256color" \
+    -v "/dev:/dev" \
+    -v "$SHARED_VOLUME" \
+    --rm \
+    --network host \
+    --privileged
+
+# These args are replaced if util/build is called with arguments
+if [ -z "$*" ]
+then append ARGS --name "$CONTAINER_NAME" "$IMAGE_TAG"
+else append ARGS "$@"
+fi
+
+call $CMD $ARGS
