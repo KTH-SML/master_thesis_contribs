@@ -66,7 +66,7 @@ class MPC_casadi:
         # Note: we convert to dense matrix to allow symbolic operations.
 
         self.Q1_list = load_param(f'{config_ns}/state_weight_matrix')
-        self.Q1 = ca.DM(np.array(self.Q1_list).reshape((4, 4)))
+        self.Q1 = 0.1*ca.DM(np.array(self.Q1_list).reshape((4, 4)))
 
         self.Q2_list = load_param(f'{config_ns}/control_rate_weight_matrix')
         self.Q2 = ca.DM(np.array(self.Q2_list).reshape((2, 2)))
@@ -80,7 +80,7 @@ class MPC_casadi:
         self.Qv_num  = load_param(f'{config_ns}/forward_speed_weight')
         self.Qv = ca.DM(self.Qv_num)
 
-        self.Q_HJ = 1000
+        self.Q_HJ = 10
         
         ## Model Parameters
 
@@ -213,7 +213,7 @@ class MPC_casadi:
                                + ca.mtimes([velocity_penalty.T, self.Qv, velocity_penalty]))
             
             # Reachability state cost
-            # self.objective += self.compute_reachability_cost_function(self.x[0,k],self.x[1,k]) * self.Q_HJ
+            self.objective += self.reachability_cost_function(self.x[0,k],self.x[1,k]) * self.Q_HJ
 
         # Final state cost
         final_state_error = self.compute_state_error(self.x[:, self.current_horizon], self.x_ref[:, self.current_horizon])
@@ -239,6 +239,12 @@ class MPC_casadi:
             self.opti.subject_to(self.x[2, k + 1] == theta_next)
             self.opti.subject_to(self.x[3, k + 1] == v_next)
             self.opti.subject_to(self.x[4, k + 1] == delta_next)
+
+            # Position constraints
+            # self.opti.subject_to(self.x[0, k] <= self.XN)
+            # self.opti.subject_to(self.x[0, k] >= self.X0)
+            # self.opti.subject_to(self.x[1, k] <= self.YN)
+            # self.opti.subject_to(self.x[1, k] >= self.Y0)
 
             # Velocity constraints
             self.opti.subject_to(self.x[3, k] <= self.max_velocity)
@@ -270,11 +276,12 @@ class MPC_casadi:
         print(self.value_function.shape)
 
     def define_reachability_cost_function(self):
+
         k = 1
-        p = 500
         t = 0
         cost = 0
         dx, dy = self.XN/len(self.value_function[t]), self.YN/len(self.value_function[t][0])
+        p = 10/dx
 
         x_var = self.opti.variable()
         y_var = self.opti.variable()
@@ -283,14 +290,15 @@ class MPC_casadi:
         for i in range(len(self.value_function[t])):  # Iterate over row indices
             for j in range(len(self.value_function[t][i])):  # Iterate over column indices
                 # Check if the minimum value in self.value_function[t][i][j] is less than 0
+                x_i, y_j = self.X0+i*dx,self.Y0+j*dy
                 if np.min(self.value_function[t][i][j]) >= 0:
-                    x_i, y_j = self.X0+i*dx,self.Y0+j*dy
-                    cost += 1/(k + p*(x_var-x_i)**2 + p*(y_var-y_j)**2)
+                    # cost += 1/(k + p*(x_var-x_i)**2 + p*(y_var-y_j)**2)/np.sqrt(p)     # Elevate outside boundaries
+                    pass 
+                else:
+                    cost -= 1/(k + p*(x_var-x_i)**2 + p*(y_var-y_j)**2)/np.sqrt(p)     # Lower inside boundaries
 
-        # cost += 1/(k + p*(x_var-1)**2 + p*(y_var-1)**2)
-        # cost += 1/(k + p*(x_var+1)**2 + p*(y_var+1)**2)
 
-        self.reachability_cost_function = ca.Function('f', [x_var, y_var], [cost/2])
+        self.reachability_cost_function = ca.Function('f', [x_var, y_var], [cost])
 
     def publish_red_dots_array(self):
         marker_pub = rospy.Publisher("/visualization_marker_array", MarkerArray, queue_size=10)
@@ -404,7 +412,7 @@ class MPC_casadi:
                 marker.scale.z = s
 
                 # Set color (red, full opacity)
-                if z >= 0.5:
+                if z >= -0.5:
                     marker.color.r = 1.0
                     marker.color.g = 0.0
                 else:
