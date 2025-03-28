@@ -61,11 +61,11 @@ class APPROXDIR(Enum):
                          lhs * rhs)
 
 
-type SetMap = idict[str, Optional[SetBuilder]]
+SetMap = idict[str, Optional]
 
-type TLTLike = Union[TLTFormula, SetBuilder, 'TLT']
+TLTLike = Union[TLTFormula, SetBuilder, 'TLT']
 
-type TLTLikeMap = Dict[str, TLTLike]
+TLTLikeMap = Dict[str, TLTLike]
 
 
 class TLT(ImplClient):
@@ -91,10 +91,10 @@ class TLT(ImplClient):
         cls.__language__ = lang
 
     @classmethod
-    def construct(cls, arg: TLTLike, **kwds: TLTLike) -> 'TLT':
+    def construct(cls, arg, **kwds) -> 'TLT':
         return cls(arg, **kwds)
 
-    def __new__(cls, arg: TLTLike, **kwds: TLTLike) -> 'TLT':
+    def __new__(cls, arg, **kwds) -> 'TLT':
         if cls.__debug: kwds.update(cls.__debug)
         return (cls.__new_from_tlt__(arg, **kwds)      if isinstance(arg, TLT) else
                 cls.__new_from_prop__(arg, **kwds)     if isinstance(arg, str) else
@@ -102,7 +102,7 @@ class TLT(ImplClient):
                 cls.__new_from_formula__(arg, **kwds))
 
     @classmethod
-    def __new_from_tlt__(cls, tlt: 'TLT', **kwds: TLTLikeMap) -> 'TLT':
+    def __new_from_tlt__(cls, tlt: 'TLT', **kwds) -> 'TLT':
         # Hacky debug helpers
         __debug: dict = {k: kwds.pop(k) for k in list(kwds) if k.startswith('__debug')}
         __debug_print: bool = __debug.get('__debug_print', False)
@@ -123,7 +123,7 @@ class TLT(ImplClient):
         return cls.__new_from_formula__(tlt._formula, **kwds, **__debug)
 
     @classmethod
-    def __new_from_prop__(cls, prop: str, **kwds: TLTLikeMap) -> 'TLT':
+    def __new_from_prop__(cls, prop: str, **kwds) -> 'TLT':
         # Hacky debug helpers
         __debug: dict = {k: kwds.pop(k) for k in list(kwds) if k.startswith('__debug')}
         __debug_print: bool = __debug.get('__debug_print', False)
@@ -137,7 +137,7 @@ class TLT(ImplClient):
                 cls.__new_init__(formula, ReferredSet(prop), setmap={prop: None}))
 
     @classmethod
-    def __new_from_builder__(cls, sb: SetBuilder, **kwds: TLTLikeMap) -> 'TLT':
+    def __new_from_builder__(cls, sb: SetBuilder, **kwds) -> 'TLT':
         # Hacky debug helpers
         __debug: dict = {k: kwds.pop(k) for k in list(kwds) if k.startswith('__debug')}
         __debug_print: bool = __debug.get('__debug_print', False)
@@ -162,7 +162,7 @@ class TLT(ImplClient):
         return self
 
     @classmethod
-    def __new_from_formula__(cls, formula: TLTFormula, **kwds: TLTLikeMap) -> 'TLT':
+    def __new_from_formula__(cls, formula: TLTFormula, **kwds) -> 'TLT':
         # Hacky debug helpers
         __debug: dict = {k: kwds.pop(k) for k in list(kwds) if k.startswith('__debug')}
         __debug_print: bool = __debug.get('__debug_print', False)
@@ -233,7 +233,7 @@ class TLT(ImplClient):
         formula = str(self._formula)
         return f'{cls}<{lang}>({approx}, {formula})'
 
-    def where(self, **kwds: TLTLike) -> 'TLT':
+    def where(self, **kwds) -> 'TLT':
         return TLT(self, **kwds)
 
     def realize(self, impl: 'I', memoize=False) -> 'R':
@@ -274,5 +274,5 @@ class TLT(ImplClient):
         yield from filter(lambda p: self._setmap[p] is None, self._setmap)
 
 
-def Identity(arg: TLTLike) -> TLT:
+def Identity(arg) -> TLT:
     return TLT(arg)

@@ -2,7 +2,8 @@
 ## Set Builder
 
 from abc import ABCMeta, abstractmethod
-from typing import TYPE_CHECKING, Self, Never
+from typing import TYPE_CHECKING
+from typing_extensions import Self, Never
 
 if TYPE_CHECKING:
     from typing_protocol_intersection import ProtocolIntersection as All
@@ -32,7 +33,7 @@ class SetBuilder(ImplClient, metaclass=SetBuilderMeta):
     free: tuple[str, ...] = ()
 
     @abstractmethod
-    def __call__(self, impl: 'I', **m: Self) -> Never | 'R': ...
+    def __call__(self, impl, **m: Self) -> Never: ...
 
     def __repr__(self) -> str:
         cls = type(self)
@@ -41,17 +42,17 @@ class SetBuilder(ImplClient, metaclass=SetBuilderMeta):
 
 class AbsurdSet(SetBuilder):
     
-    def __call__(self, impl: 'I', **m: SetBuilder) -> Never:
+    def __call__(self, impl, **m: SetBuilder) -> Never:
         raise ValueError("Cannot realize the absurd set.")
 
 ABSURD: AbsurdSet = AbsurdSet()
 
 class Set(SetBuilder):
 
-    def __init__(self, arg: 'R') -> None:
+    def __init__(self, arg) -> None:
         self.arg = arg
 
-    def __call__(self, impl: 'I', **m: SetBuilder) -> 'R':
+    def __call__(self, impl, **m: SetBuilder):
         return self.arg
 
 class ReferredSet(SetBuilder):
@@ -59,7 +60,7 @@ class ReferredSet(SetBuilder):
     def __init__(self, name: str) -> None:
         self.free += (name,)
 
-    def __call__(self, impl: 'I', **m: SetBuilder) -> Never | 'R':
+    def __call__(self, impl, **m: SetBuilder) -> Never:
         name, = self.free
         sb = m.pop(name)
         return sb(impl, **m)
@@ -78,7 +79,7 @@ class AppliedSet(SetBuilder):
 
         self.add_requirements(_require)        
 
-    def __call__(self, impl: 'I', **m: SetBuilder) -> Never | 'R':
+    def __call__(self, impl, **m: SetBuilder) -> Never:
         try:
             args = [sb(impl, **m) for sb in self.builders]
             func = getattr(impl, self.funcname)
@@ -91,24 +92,24 @@ class AppliedSet(SetBuilder):
 ## ## ## ## ## ## ## ## ## ##
 ## User-friendly Primitives
 
-class EmptySet[R, I: HasEmpty](SetBuilder):
+class EmptySet(SetBuilder):
 
     __require__ = ('empty',)
     
-    def __call__(self, impl: 'I', **m: SetBuilder) -> 'R':
+    def __call__(self, impl, **m: SetBuilder):
         return impl.empty()
     
 EMPTY: EmptySet = EmptySet()
 
-class HalfSpaceSet[R, I: HasPlaneCut, **P](SetBuilder):
+class HalfSpaceSet(SetBuilder):
 
     __require__ = ('plane_cut',)
 
-    def __init__(self, *args: P.args, **kwds: P.kwargs) -> None:
+    def __init__(self, *args, **kwds) -> None:
         self.args = args
         self.kwds = kwds
     
-    def __call__(self, impl: 'I', **m: SetBuilder) -> 'R':
+    def __call__(self, impl, **m: SetBuilder):
         return impl.plane_cut(*self.args, **self.kwds)
 
 class BoundedSet(SetBuilder):
@@ -118,7 +119,7 @@ class BoundedSet(SetBuilder):
     def __init__(self, **bounds: list[int]) -> None:
         self.bounds = bounds
 
-    def __call__(self, impl: 'I', **m: SetBuilder) -> 'R':
+    def __call__(self, impl, **m: SetBuilder):
         s = impl.complement(impl.empty())
         _bounds = [(vmin, vmax, impl.axis(name))
                    for name, (vmin, vmax) in self.bounds.items()]

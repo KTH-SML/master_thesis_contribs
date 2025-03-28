@@ -30,18 +30,20 @@ def define(primitive: Expr, formula: Expr, *depends: LanguageFragmentMeta) -> La
         # formula: Expr. Formula we're dynamically evaluating
         # args: T. Typically SetBuilder/APPROXDIR, args for the class method. 
         # return: T. Result of args applied on getattr(cls, name-of-method) according to formula. 
-        match formula:
-            case (prop,):
-                i = p_args.index(prop) # i = 0 for argname0, i = 1 for argname1
-                assert i != -1, f'Unreachable. For {primitive=}, found "{prop}" in {formula=}.'
-                return args[i]
-            case (op, rhs):
-                func = getfunc(op)
-                return func(recurse(getfunc, rhs, *args))
-            case (op, lhs, rhs):
-                func = getfunc(op)
-                return func(recurse(getfunc, lhs, *args),
-                            recurse(getfunc, rhs, *args))
+        if len(formula) == 1:
+            (prop,) = formula
+            i = p_args.index(prop) # i = 0 for argname0, i = 1 for argname1
+            assert i != -1, f'Unreachable. For {primitive=}, found "{prop}" in {formula=}.'
+            return args[i]
+        elif len(formula) == 2:
+            (op, rhs) = formula
+            func = getfunc(op)
+            return func(recurse(getfunc, rhs, *args))
+        elif len(formula) == 3:
+            (op, lhs, rhs) = formula
+            func = getfunc(op)
+            return func(recurse(getfunc, lhs, *args),
+                        recurse(getfunc, rhs, *args))
 
     @classmethod
     def new(cls, *args):

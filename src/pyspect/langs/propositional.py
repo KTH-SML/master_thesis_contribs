@@ -45,7 +45,7 @@ class Not(NOT):
 
 AND = declare('AND')
 
-class And[R, I: Impl](AND):
+class And(AND):
 
     __default__ = 'AND'
 

@@ -182,16 +182,19 @@ def lp_bound(grid, c=..., r=1, w=..., p=2, axes=...):
             (4) if `= Ellipsis` (default), all grid dimensions are used.
     """
 
-    match axes:
-        case int(i):
-            x = np.array([grid.states[..., i]])
-        case list(l):
-            x = np.array([grid.states[..., i] for i in l])
-        case np.ndarray() as A:
-            x = np.array([grid.states[..., i] for i in range(grid.ndim)])
-            x = tmul(A, x)
-        case Ellipsis:
-            x = np.array([grid.states[..., i] for i in range(grid.ndim)])
+    if isinstance(axes, int):
+        # Case where axes is an integer
+        x = np.array([grid.states[..., axes]])
+    elif isinstance(axes, list):
+        # Case where axes is a list
+        x = np.array([grid.states[..., i] for i in axes])
+    elif isinstance(axes, np.ndarray):
+        # Case where axes is a numpy ndarray
+        x = np.array([grid.states[..., i] for i in range(grid.ndim)])
+        x = tmul(axes, x)  # Assuming tmul is a function or operation
+    elif axes is Ellipsis:
+        # Case where axes is Ellipsis
+        x = np.array([grid.states[..., i] for i in range(grid.ndim)])
 
     c = np.array([0] * len(axes) if c is ... else 
                  [c] if isinstance(c, (int, float)) else 
@@ -226,15 +229,18 @@ def cylinder(grid, r, c, axis):
     _(np.ndarray)_
     Implicit surface function of the cylinder.
     """
-    match axis:
-        case int(i):
-            v = [0]*grid.ndim
-            v[i] = 1
-        case v: 
-            v = np.array(v)
-            v /= np.linalg.norm(v)
-            assert len(c) == grid.ndim, "Center point must have same dimension as grid"
-            assert len(v) == grid.ndim, "Axis must have same dimension as grid"
+    if isinstance(axis, int):
+        # Case where axis is an integer
+        v = [0] * grid.ndim
+        v[axis] = 1
+    elif isinstance(axis, (list, np.ndarray)):
+        # Case where axis is a list or numpy ndarray
+        v = np.array(axis)
+        v /= np.linalg.norm(v)
+        
+        # Check that the length of the center point (c) and axis matches the grid dimensions
+        assert len(c) == grid.ndim, "Center point must have same dimension as grid"
+        assert len(v) == grid.ndim, "Axis must have same dimension as grid"
 
     # transformation matrix to space orthogonal to v
     # we're still in the same space, but have removed one axis.

@@ -1,5 +1,6 @@
 from abc import ABCMeta
-from typing import ClassVar, Self, Optional, Union, Tuple, Set, Dict, Any
+from typing import ClassVar, Optional, Union, Tuple, Set, Dict, Any
+from typing_extensions import Self
 from contextlib import contextmanager
 
 __all__ = (
@@ -11,7 +12,7 @@ __all__ = (
 
 BiOp = Tuple[str, 'Expr', 'Expr'] 
 UnOp = Tuple[str, 'Expr']
-Term = Tuple[str] | str
+Term = Union[Tuple[str], str]
 Expr = Union[BiOp, UnOp, Term]
 
 def canonicalize(expr: Expr) -> Expr:
@@ -81,15 +82,17 @@ class LanguageFragmentMeta(ABCMeta, type):
 
     def is_modelling(cls, formula: Expr) -> bool:
         if isinstance(formula, str): return True
-        match formula:
-            case (prop,):
-                return True
-            case (op, rhs): 
-                return (False if op not in cls.__primitives__ else 
-                        cls.is_modelling(rhs))
-            case (op, lhs, rhs):
-                return (False if op not in cls.__primitives__ else 
-                        cls.is_modelling(lhs) and cls.is_modelling(rhs))
+        if len(formula) == 1:
+            (prop,) = formula
+            return True
+        if len(formula) == 2:
+            (op, rhs) = formula
+            return (False if op not in cls.__primitives__ else 
+                    cls.is_modelling(rhs))
+        if len(formula) == 3:
+            (op, lhs, rhs) = formula
+            return (False if op not in cls.__primitives__ else 
+                    cls.is_modelling(lhs) and cls.is_modelling(rhs))
 
 
 # The Void fragment is a singleton for a trivial language that 
