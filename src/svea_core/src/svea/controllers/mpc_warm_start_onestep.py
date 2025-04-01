@@ -1,3 +1,5 @@
+### ONE STEP VERSION
+
 #! /usr/bin/env python3
 
 import casadi as ca
@@ -38,7 +40,7 @@ class MPC_casadi:
         Initialize the MPC controller with the given parameters:
 
         :param L: Wheelbase of the vehicle (unit [m])
-        :param N: Prediction horizon steps
+        :param N = 1: One step prediction
         :param dt: Sampling time
         :param min_steering: Minimum steering angle [rad]
         :param max_steering: Maximum steering angle [rad]
@@ -55,11 +57,6 @@ class MPC_casadi:
 
         ## Core Parameters
 
-        # The prediction horizon steps for the mpc optimization problem.
-        self.N = load_param(f'{config_ns}/prediction_horizon')
-
-        self.current_horizon = self.N # Initially set to max horizon
-
         # The time step in which the optimization problem is divided (unit [s]).
         self.dt = ca.DM(load_param(f'{config_ns}/time_step'))
         
@@ -67,29 +64,32 @@ class MPC_casadi:
         # Note: we convert to dense matrix to allow symbolic operations.
 
         self.Q1_list = load_param(f'{config_ns}/state_weight_matrix')
-        self.Q1 = 1 * ca.DM(np.array(self.Q1_list).reshape((4, 4)))
+        self.Q1 = ca.DM(np.array(self.Q1_list).reshape((4, 4)))
 
         self.Q2_list = load_param(f'{config_ns}/control_rate_weight_matrix')
-        self.Q2 = 1 * ca.DM(np.array(self.Q2_list).reshape((2, 2)))
+        self.Q2 = ca.DM(np.array(self.Q2_list).reshape((2, 2)))
 
         self.Q3_list = load_param(f'{config_ns}/control_weight_matrix')
-        self.Q3 = 1 * ca.DM(np.array(self.Q3_list).reshape((2, 2)))
+        self.Q3 = ca.DM(np.array(self.Q3_list).reshape((2, 2)))
 
         self.Qf_list = load_param(f'{config_ns}/final_state_weight_matrix')
-        self.Qf = 1 * ca.DM(np.array(self.Qf_list).reshape((4, 4)))
+        self.Qf = ca.DM(np.array(self.Qf_list).reshape((4, 4)))
 
         self.Qv_num  = load_param(f'{config_ns}/forward_speed_weight')
-        self.Qv = 1 * ca.DM(self.Qv_num)
+        self.Qv = ca.DM(self.Qv_num)
 
-        self.Q_HJ = 0.1
+        self.Q_HJ = 10
         
         ## Model Parameters
 
         self.min_steering = np.radians(load_param(f'{config_ns}/steering_min'))
         self.max_steering = np.radians(load_param(f'{config_ns}/steering_max'))
 
-        self.min_steering_rate = np.radians(load_param(f'{config_ns}/steering_rate_min'))
-        self.max_steering_rate = np.radians(load_param(f'{config_ns}/steering_rate_max'))
+        # self.min_steering_rate = np.radians(load_param(f'{config_ns}/steering_rate_min'))
+        # self.max_steering_rate = np.radians(load_param(f'{config_ns}/steering_rate_max'))
+
+        self.min_steering_rate = -np.pi/6
+        self.max_steering_rate = np.pi/6
 
         self.min_velocity = load_param(f'{config_ns}/velocity_min')
         self.max_velocity = load_param(f'{config_ns}/velocity_max')
@@ -97,7 +97,7 @@ class MPC_casadi:
         self.min_acceleration = load_param(f'{config_ns}/acceleration_min')
         self.max_acceleration = load_param(f'{config_ns}/acceleration_max')
 
-        self.min_bounds_data = np.array([ 0,           self.X0,           self.Y0,-np.pi, -np.pi/6, 0.3])
+        self.min_bounds_data = np.array([ 0,           self.X0,           self.Y0,-np.pi, -np.pi/6, 0.0])
         self.max_bounds_data = np.array([20, self.X0 + self.XN, self.Y0 + self.YN, np.pi,  np.pi/6, 0.8])
 
         # Wheelbase of the vehicle (unit [m]).
@@ -106,20 +106,14 @@ class MPC_casadi:
         ## Setup CasADi
         self.opti = ca.Opti()
 
-        ## Import value function
+        ## Import value function and define grid
         self.set_value_function()
         dims = self.value_function.shape
         self.grids = [np.linspace(self.min_bounds_data[i], self.max_bounds_data[i], dims[i]) for i in range(6)]
 
         load_from_file = True
-        if load_from_file:
-            ## Load cost function from file
-            print("Loading reachability cost from saved file")
-            self.load_reachability_cost_function()
-        else:
-            ## Define cost function by interpoling value function
-            print("Defining reachability cost")
-            self.define_reachability_cost_function()
+        if load_from_file: self.load_reachability_cost_function()      ## Load cost function from file
+        else: self.define_reachability_cost_function()    ## Define cost function by interpoling value function
 
         ## Setup cost associated with value function
         self.define_state_and_control_variables()
@@ -134,9 +128,24 @@ class MPC_casadi:
 
         ## Publish points for reachability
         self.thread2 = threading.Thread(target=self.publish_value_func, daemon = True)
-        self.thread2.start()
+        # self.thread2.start()
 
-        self.warmstart_pub = rospy.Publisher("/visualization_warmstart", MarkerArray, queue_size=10)
+        # for i in range(10):
+        #     random_index = [
+        #         np.random.random_integers(0, dims[i]-1)
+        #         for i in range(len(dims))
+        #     ]
+        #     point = [self.grids[i][int(random_index[i])] for i in range(len(random_index))]
+
+        #     print("Index:", random_index)
+        #     print("Point:", point)
+        #     print("Value function at random index:", self.value_function[random_index[0],random_index[1],random_index[2],random_index[3],random_index[4],random_index[5]])
+        #     print("Reachability cost function at random point:", self.reachability_cost_function(ca.vertcat(point)), "\n")
+
+        ## Publish points for warmstart
+        self.warmstart = []
+        self.thread3 = threading.Thread(target=self.publish_warmstart, daemon = True)
+        self.thread3.start()
 
     def compute_control(self, state, reference_trajectory):
         """
@@ -153,16 +162,19 @@ class MPC_casadi:
         # Add one rows of zero to the reference_trajectory matrix.
         reference_trajectory = ca.vertcat(reference_trajectory,ca.DM.zeros(1, reference_trajectory.shape[1]))
 
-        # Compute warmstart and apply it
-        warmstart = self.compute_warmstart([0] + state)
-        self.publish_warmstart(warmstart)
-        warmstart_DM = ca.DM(warmstart)
-        self.opti.set_initial(self.x[:,:], warmstart_DM[:self.current_horizon+1,1:].T)
-
         # Set current state and reference trajectory for the active part of the horizon
+        # print(f"reference_trajectory shape: {reference_trajectory.shape}")
+        # print(f"self.current_horizon: {self.current_horizon}")
+        # print(f"Attempting slice: reference_trajectory[:, :{self.current_horizon+1}]")
+
+        now = rospy.get_rostime()
+        self.warmstart = self.compute_warmstart([0,state[0],state[1],state[2],state[3],state[4]])
+        print("Warmstart in ",(rospy.get_rostime() - now).to_sec(),"sec")
+
         self.opti.set_value(self.x_init, bounded_state)
-        # self.opti.set_value(self.x_ref[:, :self.current_horizon+1], warmstart_DM[:self.current_horizon+1,1:].T)
         self.opti.set_value(self.x_ref[:, :self.current_horizon+1], reference_trajectory[:, :self.current_horizon+1])
+
+        # self.opti.set_initial(self.x, self.warmstart[1:6])
 
         # Extract control actions (acceleration and steering rate)
         try:
@@ -171,9 +183,9 @@ class MPC_casadi:
             acceleration = self.sol.value(self.u[0, 0])
             steering_rate = self.sol.value(self.u[1, 0])
         except:
-            # self.sol = None
             acceleration = 0
             steering_rate = 0
+            print("No solve")
 
         return steering_rate, acceleration
     
@@ -209,45 +221,35 @@ class MPC_casadi:
 
     def define_state_and_control_variables(self):
         # Define state and control variables
-        self.x = self.opti.variable(5, self.N + 1)  # state = [x, y, theta, v, steering]
-        self.u = self.opti.variable(2, self.N)      # input = [steering_rate, acceleration]
+        self.x = self.opti.variable(5, 2)  # state = [x, y, theta, v, steering]
+        self.u = self.opti.variable(2, 1)      # input = [steering_rate, acceleration]
 
         self.x_init = self.opti.parameter(5)             # Initial state
-        self.x_ref = self.opti.parameter(5, self.N + 1)  # Reference trajectory
-
-        self.M = self.opti.variable()     # Slack variable
+        self.x_ref = self.opti.parameter(5, 2)  # Reference trajectory
 
     def set_objective_function(self):
-        # Define the objective function:
+        # Define the objective function: 
         # J = (x[k]-x_ref[k])^T Q1 (x[k]-x_ref[k]) + (u[k+1] - u[k])^T Q2 (u[k+1] - u[k]) + u[k]^T Q3 u[k] + Qv max(0,-x[3])^2
         self.objective = 0
-        for k in range(self.current_horizon):
-            # State error term (ignore delta in reference trajectory)
-            state_error = self.compute_state_error(self.x[:, k], self.x_ref[:, k])
 
-            # Control input rate of change term (u[k+1] - u[k])
-            if k < self.current_horizon - 1:
-                input_cost = self.u[:, k+1] - self.u[:, k]
-            else:
-                input_cost = ca.DM.zeros(self.u.shape[0], 1)
+        # State error term (ignore delta in reference trajectory)
+        state_error = self.compute_state_error(self.x[:, 1], self.x_ref[:, 1])
 
-            # Penalize for negative velocity (soft constraint)
-            velocity_penalty = ca.fmax(0, -self.x[3, k])  # Penalize if v < 0
+        # Control input rate of change term (x[1] - x[0])
+        change_of_rate_cost = self.x[:, 1] - self.x[:, 0]
 
-            # Accumulate the terms into the objective
-            self.objective += (ca.mtimes([state_error.T, self.Q1, state_error]) 
-                               + ca.mtimes([input_cost.T, self.Q2, input_cost])
-                               + ca.mtimes([self.u[:, k].T, self.Q3, self.u[:, k]])
-                               + ca.mtimes([velocity_penalty.T, self.Qv, velocity_penalty])
-                               )
+        # Penalize for negative velocity (soft constraint)
+        velocity_penalty = ca.fmax(0, -self.x[3, 1])  # Penalize if v < 0
+
+        # Accumulate the terms into the objective
+        self.objective += (ca.mtimes([state_error.T, self.Q1, state_error]) 
+                            # + ca.mtimes([change_of_rate_cost.T, self.Q2, change_of_rate_cost])
+                            + ca.mtimes([self.u[:, 0].T, self.Q3, self.u[:, 0]])
+                            + ca.mtimes([velocity_penalty.T, self.Qv, velocity_penalty]))
             
-            # Penalize high values in reachability set
-            # reachability_cost = self.reachability_cost_function(ca.vertcat(0,self.x[0, k],self.x[1, k],self.x[2, k],self.x[3, k],self.x[4, k]))
-            # self.objective += ca.mtimes([reachability_cost, self.Q_HJ])
-
         # Final state cost
-        final_state_error = self.compute_state_error(self.x[:, self.current_horizon], self.x_ref[:, self.current_horizon])
-        self.objective += ca.mtimes([final_state_error.T, self.Qf, final_state_error])
+        # final_state_error = self.compute_state_error(self.x[:, self.current_horizon], self.x_ref[:, self.current_horizon])
+        # self.objective += ca.mtimes([final_state_error.T, self.Qf, final_state_error])
 
         # Specify type of optimization problem
         self.opti.minimize(self.objective)
@@ -257,41 +259,57 @@ class MPC_casadi:
         self.opti.subject_to(self.x[:, 0] == self.x_init)
 
         # Vehicle dynamics constraints - Simple kinematic bycicle model
-        for k in range(self.N):
-            x_next = self.x[0, k] + self.dt * self.x[3, k] * ca.cos(self.x[2, k])                   # x_k+1 = x_k + dt * v_k * cos(theta_k)
-            y_next = self.x[1, k] + self.dt * self.x[3, k] * ca.sin(self.x[2, k])                   # y_k+1 = y_k + dt * v_k * sin(theta_k)
-            theta_next = self.x[2, k] + self.dt * (self.x[3, k] / self.L) * ca.tan(self.x[4, k])    # theta_k+1 = theta_k + dt * v_k * tan(delta_k) / L
-            v_next = self.x[3, k] + self.dt * self.u[0, k]                                          # v_k+1 = v_k + dt * a_k
-            delta_next = self.x[4, k] + self.dt * self.u[1, k]                                      # delta_k+1 = delta_k + dt * steering_rate_k
+        x_next = self.x[0, 0] + self.dt * self.x[3, 0] * ca.cos(self.x[2, 0])                   # x_k+1 = x_k + dt * v_k * cos(theta_k)
+        y_next = self.x[1, 0] + self.dt * self.x[3, 0] * ca.sin(self.x[2, 0])                   # y_k+1 = y_k + dt * v_k * sin(theta_k)
+        theta_next = self.x[2, 0] + self.dt * (self.x[3, 0] / self.L) * ca.tan(self.x[4, 0])    # theta_k+1 = theta_k + dt * v_k * tan(delta_k) / L
+        v_next = self.x[3, 0] + self.dt * self.u[0, 0]                                          # v_k+1 = v_k + dt * a_k
+        delta_next = self.x[4, 0] + self.dt * self.u[1, 0]                                      # delta_k+1 = delta_k + dt * steering_rate_k
 
-            self.opti.subject_to(self.x[0, k + 1] == x_next)
-            self.opti.subject_to(self.x[1, k + 1] == y_next)
-            self.opti.subject_to(self.x[2, k + 1] == theta_next)
-            self.opti.subject_to(self.x[3, k + 1] == v_next)
-            self.opti.subject_to(self.x[4, k + 1] == delta_next)
+        self.opti.subject_to(self.x[0, 1] == x_next)
+        self.opti.subject_to(self.x[1, 1] == y_next)
+        self.opti.subject_to(self.x[2, 1] == theta_next)
+        self.opti.subject_to(self.x[3, 1] == v_next)
+        self.opti.subject_to(self.x[4, 1] == delta_next)
 
-            # Velocity constraints
-            self.opti.subject_to(self.x[3, k] <= self.max_velocity)
-            self.opti.subject_to(self.x[3, k] >= self.min_velocity)
+        # self.opti.subject_to(
+        #     self.reachability_cost_function(
+        #         ca.vertcat(0, self.x[0, k+1], self.x[1, k+1], self.x[2, k+1], self.x[3, k+1], self.x[4, k+1])
+        #     ) < 0
+        # )
 
-            # Steering angle constraints
-            self.opti.subject_to(self.x[4, k] <= self.max_steering)
-            self.opti.subject_to(self.x[4, k] >= self.min_steering)
+        # Position constraints
+        self.opti.subject_to(self.x[0, 0] <= self.XN)
+        self.opti.subject_to(self.x[0, 0] >= self.X0)
+        self.opti.subject_to(self.x[1, 0] <= self.YN)
+        self.opti.subject_to(self.x[1, 0] >= self.Y0)
 
+        # Velocity constraints
+        self.opti.subject_to(self.x[3, 0] <= self.max_velocity)
+        self.opti.subject_to(self.x[3, 0] >= self.min_velocity)
+
+        # Steering angle constraints
+        self.opti.subject_to(self.x[4, 0] <= self.max_steering)
+        self.opti.subject_to(self.x[4, 0] >= self.min_steering)
+    
     def set_control_input_constraints(self):
         # Input constraints (acceleration, steering rate)
-        for k in range(self.N):
-            self.opti.subject_to(self.min_acceleration <= self.u[0, k])
-            self.opti.subject_to(self.u[0, k] <= self.max_acceleration)
+        self.opti.subject_to(self.min_acceleration <= self.u[0, 0])
+        self.opti.subject_to(self.u[0, 0] <= self.max_acceleration)
 
-            # Steering rate constraint
-            self.opti.subject_to(self.min_steering_rate <= self.u[1, k])
-            self.opti.subject_to(self.u[1, k] <= self.max_steering_rate)
+        # Steering rate constraint
+        self.opti.subject_to(self.min_steering_rate <= self.u[1, 0])
+        self.opti.subject_to(self.u[1, 0] <= self.max_steering_rate)
 
     def set_solver_options(self):
         # Set solver options
         opts = {"ipopt.print_level": 0, "print_time": 0}
         self.opti.solver("ipopt", opts)
+
+    def load_reachability_cost_function(self):
+        """
+        Loads reachability function directly from saved file
+        """
+        self.reachability_cost_function = ca.Function.load("reachability_cost_function.casadi")
 
     def set_value_function(self):
         # Import value function from file
@@ -304,6 +322,18 @@ class MPC_casadi:
         This converts the value-function-grid into a continuous function using interpolants.
         The function is saved so that it can be loaded in efficiently if no changes are made\n
         """
+        k = 1
+        t = 0
+        cost = 0
+        dx, dy = self.XN/len(self.value_function[t]), self.YN/len(self.value_function[t][0])
+        p = 10/dx
+
+        X0, Y0 = self.X0, self.Y0
+        XN, YN = self.XN, self.YN
+
+        x_var = self.opti.variable()
+        y_var = self.opti.variable()
+        t_var = self.opti.variable()
 
         print("Loading reachability function")
 
@@ -311,18 +341,13 @@ class MPC_casadi:
 
         # Create CasADi interpolation function
         self.reachability_cost_function = ca.interpolant("reachability_cost_function", "linear", self.grids, self.value_function.ravel(order="F"))  # Column-major flattening
+
         save_path = os.path.join(os.getcwd(), "reachability_cost_function.casadi")
         self.reachability_cost_function.save(save_path)
 
         time = (rospy.get_rostime() - now).to_sec()
 
         print(f"Function saved at: {save_path}, load time: {time}")
-
-    def load_reachability_cost_function(self):
-        """
-        Loads reachability function directly from saved file
-        """
-        self.reachability_cost_function = ca.Function.load("reachability_cost_function.casadi")
 
     def publish_red_dots_array(self):
         marker_pub = rospy.Publisher("/visualization_marker_array", MarkerArray, queue_size=10)
@@ -337,17 +362,9 @@ class MPC_casadi:
         for i in range(len(self.value_function[t])):  # Iterate over row indices
             for j in range(len(self.value_function[t][i])):  # Iterate over column indices
                 # Check if the minimum value in self.value_function[t][i][j] is less than 0
+
                 if np.min(self.value_function[t][i][j]) >= 0:
                     positions.append((self.X0+i*dx,self.Y0+j*dy,0))
-
-        # for time in range(len(self.value_function)):
-        #     for i in range(len(self.value_function[time])):  # Iterate over row indices
-        #         for j in range(len(self.value_function[time][i])):  # Iterate over column indices
-        #             # Check if the minimum value in self.value_function[t][i][j] is less than 0
-        #             if np.min(self.value_function[time][i][j]) < 0:
-        #                 positions.append((X0+i*dx,Y0+j*dy,time/5))
-
-        # positions = [(x * 0.5, x * 0.5, 0.5) for x in range(10)]  # Generates a diagonal line of dots
         
         while not rospy.is_shutdown():
             marker_array = MarkerArray()  # Create an array of markers
@@ -477,47 +494,55 @@ class MPC_casadi:
             rate.sleep()
             t += 1
     
-    def publish_warmstart(self, warmstart):
+    def publish_warmstart(self):
+        marker_pub = rospy.Publisher("/visualization_warmstart", MarkerArray, queue_size=10)
+
+        rate = rospy.Rate(1)  # Publish at 1 Hz
+
         # Define multiple positions for the red dots
+        t = 0
         positions = []
 
         # print(warmstart)
-        for pos in warmstart:
+        for pos in self.warmstart:
             positions.append((pos[1],pos[2],pos[0]/4*0))
         
-        marker_array = MarkerArray()  # Create an array of markers
+        while not rospy.is_shutdown():
+            marker_array = MarkerArray()  # Create an array of markers
 
-        for i, (x, y, z) in enumerate(positions):
-            marker = Marker()
-            marker.header.frame_id = "map"
-            marker.header.stamp = rospy.Time.now()
-            marker.ns = "blue_dots"
-            marker.id = i  # Each marker must have a unique ID
-            marker.type = Marker.SPHERE
-            marker.action = Marker.ADD
+            for i, (x, y, z) in enumerate(positions):
+                marker = Marker()
+                marker.header.frame_id = "map"
+                marker.header.stamp = rospy.Time.now()
+                marker.ns = "blue_dots"
+                marker.id = i  # Each marker must have a unique ID
+                marker.type = Marker.SPHERE
+                marker.action = Marker.ADD
 
-            # Set position
-            marker.pose.position = Point(x, y, z)
-            marker.pose.orientation.w = 1.0
+                # Set position
+                marker.pose.position = Point(x, y, z)
+                marker.pose.orientation.w = 1.0
 
-            # Set scale (size of dots)
-            s = 0.1
-            marker.scale.x = s
-            marker.scale.y = s
-            marker.scale.z = s
+                # Set scale (size of dots)
+                s = 0.1
+                marker.scale.x = s
+                marker.scale.y = s
+                marker.scale.z = s
 
-            # Set color (red, full opacity)
-            marker.color.r = 0.0
-            marker.color.g = 0.0
-            marker.color.b = 1.0
-            marker.color.a = 1.0
+                # Set color (red, full opacity)
+                marker.color.r = 0.0
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+                marker.color.a = 1.0
 
-            marker.lifetime = rospy.Duration()  # Keep dots persistent
+                marker.lifetime = rospy.Duration()  # Keep dots persistent
 
-            marker_array.markers.append(marker)
+                marker_array.markers.append(marker)
 
-        # Publish the entire marker array
-        self.warmstart_pub.publish(marker_array)
+            # Publish the entire marker array
+            marker_pub.publish(marker_array)
+            
+            rate.sleep()
 
     def bound_initial_state(self,state):
         """
@@ -571,12 +596,11 @@ class MPC_casadi:
         self.set_objective_function()
 
     def reset_parameters(self):
-
         """
         Reset the core parameters and weight matrices of the MPC instance to their initial values.
         Useful for restoring values to their original state after runtime modifications.
         """
-        self.current_horizon = self.N  # Reset to max horizon
+        self.current_horizon = 1  # Reset to max horizon
 
         # Reset weight matrices
         self.Q1 = ca.DM(np.array(self.Q1_list).reshape((4, 4)))
@@ -587,9 +611,34 @@ class MPC_casadi:
         # Reset objective function with initial values.
         self.set_objective_function()
 
+    def update_step(self, state, control, min_bounds, max_bounds):
+        L = 0.8  # Wheelbase of the vehicle
+        tau = 0.2  # Time constant
+
+        x = state[1]        # x-coordinate
+        y = state[2]        # y-coordinate
+        theta = state[3]    # Yaw/Heading
+        omega = state[4]    # Change rate of yaw
+        v = state[5]        # Velocity
+        
+        delta = control[0]  # Steering angle
+        a = control[1]      # Acceleration
+
+        # Compute the state derivatives
+        dt = 0.2
+        dx = v * ca.cos(theta)
+        dy = v * ca.sin(theta)
+        dtheta = omega
+        domega = v/L*np.tan(delta)-omega/tau
+        dv = a
+
+        dstate = [0,dx,dy,dtheta,domega,dv]
+        new_state = [float(state[i] + dt*dstate[i]) for i in range(6)]
+        return [min(max_bounds[i], max(min_bounds[i], new_state[i])) for i in range(6)]
+
     def compute_warmstart(self, start_point):
         path = [start_point]
-        nr_of_samples = 10
+        nr_of_samples = 20
         t_max = 20
 
         min_bounds_state = [ 0,         self.X0,         self.Y0, -np.pi, -np.pi/6, 0.0]
@@ -601,9 +650,9 @@ class MPC_casadi:
         point = start_point
         reached_end = False
 
-        dt = 0.1
+        dt = 0.2
 
-        for _ in range(self.current_horizon+1):
+        for _ in range(10):
             while self.reachability_cost_function(ca.vertcat(point)) < 0:
                 point[0] += dt
 
@@ -639,27 +688,64 @@ class MPC_casadi:
 
         return path
     
-    def update_step(self, state, control, min_bounds, max_bounds):
-        L = 0.8  # Wheelbase of the vehicle
-        tau = 0.2  # Time constant
+    def compute_warmstart_OLD(self):
+        STATE_INIT = [self.X0+7.5*self.XN/8, self.Y0+1.5*self.YN/8, np.pi, 0, 0]
+        start_point = [0] + STATE_INIT
+        path = [start_point]
+        nr_of_samples = 100
+        t_max = 20
 
-        x = state[1]        # x-coordinate
-        y = state[2]        # y-coordinate
-        theta = state[3]    # Yaw/Heading
-        omega = state[4]    # Change rate of yaw
-        v = state[5]        # Velocity
-        
-        delta = control[0]  # Steering angle
-        a = control[1]      # Acceleration
+        min_bounds_state = [ 0,         self.X0,         self.Y0, -np.pi, -np.pi/6, 0.0]
+        max_bounds_state = [20, self.X0+self.XN, self.Y0+self.YN,  np.pi,  np.pi/6, 0.8]
 
-        # Compute the state derivatives
+        min_bounds_input = [-5*np.pi/4, -0.4]
+        max_bounds_input = [ 5*np.pi/4,  0.4]
+
+        point = start_point
+        reached_end = False
+
         dt = 0.2
-        dx = v * ca.cos(theta)
-        dy = v * ca.sin(theta)
-        dtheta = omega
-        domega = v/L*np.tan(delta)-omega/tau
-        dv = a
 
-        dstate = [0,dx,dy,dtheta,domega,dv]
-        new_state = [float(state[i] + dt*dstate[i]) for i in range(6)]
-        return [min(max_bounds[i], max(min_bounds[i], new_state[i])) for i in range(6)]
+        for _ in range(100):
+            while self.value_function[self.coord_to_index(point)] < 0:
+                point[0] += dt
+
+                if point[0] >= t_max:
+                    reached_end = True
+                    break
+
+            if reached_end:
+                break
+
+            random_points = []
+            for i in range(nr_of_samples):
+                control = np.random.uniform(min_bounds_input, max_bounds_input)
+                
+                new_point = self.update_step(point, control, min_bounds_state, max_bounds_state)
+                random_points.append(new_point)
+
+            random_indexes = []
+            for p in random_points:
+                random_indexes.append(self.coord_to_index(p))
+            # print(random_indexes)
+
+            values = [self.value_function[ri] for ri in random_indexes]
+
+            min_index = values.index(min(values))
+            best_point = random_points[min_index]
+
+            path.append(best_point)
+            point = best_point
+
+        return path
+    
+    def coord_to_index(self, coords):
+        indices = []
+        out1_shape = self.value_function.shape
+        for i in range(6):
+            norm_value = (coords[i] - self.min_bounds_data[i]) / (self.max_bounds_data[i] - self.min_bounds_data[i])
+            index = round(norm_value * (out1_shape[i] - 1))
+            index = max(0, min(index, out1_shape[i] - 1))
+            indices.append(int(index))
+
+        return tuple(indices)

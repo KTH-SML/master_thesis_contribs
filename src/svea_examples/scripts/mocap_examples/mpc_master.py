@@ -50,7 +50,7 @@ class mpc_navigation:
         ## ROS Parameters
         self.USE_RVIZ = load_param('~use_rviz', False)
         self.IS_SIM = load_param('~is_sim', False)
-        self.STATE = load_param('~state', [1.75, -1.25, np.pi, 0])    # [x,y,yaw,v] wrt map frame. Initial state for simulator.
+        self.STATE = load_param('~state', [3.2, -2.5, np.pi, 0])    # [x,y,yaw,v] wrt map frame. Initial state for simulator.
         self.MPC_FREQ = load_param('~mpc_freq', 10)
         self.SVEA_MOCAP_NAME = load_param('~svea_mocap_name')
         self.DELTA_S = load_param('~delta_s', 5)            # static path discretization lenght
@@ -66,7 +66,7 @@ class mpc_navigation:
         self.RESET_MPC_PARAM = False   # A flag indicating if the MPC parameters should be reset when the system is moving away from the target.
         self.predicted_state = None
         self.mpc_last_time = rospy.get_time()
-        self.mpc_dt = 1.0 / self.MPC_FREQ 
+        self.mpc_dt = 1.0 / self.MPC_FREQ
         self.current_horizon = self.initial_horizon
 
         ## Static Planner parameters

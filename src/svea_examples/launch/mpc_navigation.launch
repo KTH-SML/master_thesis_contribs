@@ -71,7 +71,7 @@
             <param name="circle_center_y" value="0"/>
             <param name="svea_mocap_name" value="$(arg svea_mocap_name)"/>
             <param name="mpc_config_ns" value="~mpc"/>
-            <rosparam file="$(find svea_core)/params/mpc_default_path_tracking.yaml" />
+            <rosparam file="$(find svea_core)/params/mpc_default.yaml" />
         </node>
     </group>
     

@@ -5,7 +5,7 @@
 mpc:
   ## Core Parameters
   # The time step in which the optimization problem is divided (unit [s])
-  time_step: 0.4
+  time_step: 0.1
 
   # The prediction horizon steps for the mpc optimization problem
   prediction_horizon: 10
@@ -45,7 +45,7 @@ mpc:
 
   # The min/max steering rate allowed for SVEA (unit [degrees/s])
   steering_rate_min: -35 
-  steering_rate_max: 35 
+  steering_rate_max: 35
 
   # The min/max velocity allowed for SVEA (unit [m/s^2])
   velocity_min: -0.4
